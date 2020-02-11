@@ -1,0 +1,3 @@
+FROM ll:latest
+EXPOSE 9090 8080
+CMD ls
