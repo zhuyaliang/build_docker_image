@@ -262,8 +262,32 @@ static gboolean create_version_file (char *version_file,char **standard_error)
 	return TRUE;
 
 }
-static char *get_sha256sum_value (const char *layer_name)
+static char *get_json_config_name (void)
 {
+	json_object	*js;
+	char        *json_file;
+	char jsonbuff[10240] = { 0 };
+	int fd;
+	const char *config_file;
+
+	json_file = g_build_filename (compress_dir,"manifest.json",NULL);
+	fd = open (json_file,O_RDWR);
+	read (fd,jsonbuff,10240);
+	
+	jsonbuff[0] = ' ';
+	jsonbuff[strlen(jsonbuff) - 1] = ' ';
+	js = json_tokener_parse(jsonbuff);
+
+    json_object_object_foreach(js, key, value)  /*Passing through every array element*/
+    {
+        if (g_strcmp0(key,"Config") == 0)
+        {
+			config_file = json_object_get_string (value);
+        }
+    }
+	g_free (json_file);
+	
+	return strdup (config_file);
 }
 static char *create_image_layer (char *copy_tmp)
 {
@@ -292,8 +316,7 @@ static char *get_current_local_time (void)
 	char *time;
 
 	dt = g_date_time_new_now_local ();
-	time =  g_date_time_format(dt, "%FT%T");
-
+	time =  g_date_time_format(dt, "%FT%T.385601477Z");
 	return time;
 }
 static void add_rootfs_diff_ids (json_object *js,char *sha256_value)
@@ -420,7 +443,7 @@ static gboolean docker_copy_opt (char **line)
 		output_error_message ("Build","source file %s not a regular file",line[1]);
 	}
 	
-	line[2][strlen (line[1]) -1] = '\0';
+	line[2][strlen (line[2]) -1] = '\0';
 	dest_dir = g_build_filename (copy_tmp,line[2], NULL);
 	mkdir (dest_dir, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH); 
 	dest_file = g_build_filename (dest_dir,line[1], NULL);
@@ -521,13 +544,13 @@ static gboolean docker_expose_opt (char **line)
 {
 	json_object	*js;
 	int          i = 1;
-	char        *json_file;
 	char jsonbuff[10240] = { 0 };
 	int fd;
-	const char *config_file;
+	char *config_file;
 
 	g_autoptr(GPtrArray) port_array;
 
+	/*save all ports*/
 	port_array = g_ptr_array_new ();
 	while (line[i] != NULL)
 	{
@@ -538,30 +561,76 @@ static gboolean docker_expose_opt (char **line)
 	{
 		output_error_message ("Build","Please add port number");
 	}
-	json_file = g_build_filename (compress_dir,"manifest.json",NULL);
-	fd = open (json_file,O_RDWR);
-	read (fd,jsonbuff,10240);
-	
-	jsonbuff[0] = ' ';
-	jsonbuff[strlen(jsonbuff) - 1] = ' ';
-	js = json_tokener_parse(jsonbuff);
-
-    json_object_object_foreach(js, key, value)  /*Passing through every array element*/
-    {
-        if (g_strcmp0(key,"Config") == 0)
-        {
-			config_file = json_object_get_string (value);
-        }
-    }
-	g_free (json_file);
-	
+	/*get sha256sum json confif file name*/
+	config_file = get_json_config_name ();
+	/*change sha256sum json confif file port xxxx/tcp {}*/
 	change_json_expose_port (config_file,port_array);
-
+	
+	g_free (config_file);
 	return TRUE;
+}
+static void add_image_start_cmd (json_object *js,char **line)
+{
+	enum json_type type;
+	json_object *js_cmd;
+	guint        i = 1,j = 0;
+	char         json_data[100] = { 0 };
+	char         image_cmd[1024] = { 0 };
+
+	
+	while (line[i] != NULL)
+	{
+		memcpy (&image_cmd[j],line[i],strlen(line[i]));
+
+		j += strlen(line[i]);
+		image_cmd[j] = ' ';
+		j++;
+		i++;
+	}
+	if (image_cmd[j-2] == '\n')
+	{
+		image_cmd[j-2] = '\0';
+	}
+	js_cmd = json_object_new_array ();
+
+	json_object_object_foreach(js, key, value)
+    {
+        if (g_strcmp0(key,"Cmd") == 0)
+        {
+			json_object_object_del (js,key);
+        }
+	}
+	json_object_array_add (js_cmd, json_object_new_string ("/bin/sh"));
+	json_object_array_add (js_cmd, json_object_new_string ("-c"));
+	json_object_array_add (js_cmd, json_object_new_string (image_cmd));
+	json_object_object_add(js,"Cmd",js_cmd);
 }
 static gboolean docker_cmd_opt (char **line)
 {
+	char *config_file;
+	int   fd;
+	char  jsonbuff[10240] = { 0 };
+	json_object	*js;
+	char        *json_file;
+	
+	/*get sha256sum json confif file name*/
+	config_file = get_json_config_name ();
+	json_file = g_build_filename (compress_dir,config_file,NULL);
+	fd = open (json_file,O_RDWR);
+	read (fd,jsonbuff,10240);
+	
+	js = json_tokener_parse(jsonbuff);
+	json_object_object_foreach(js, key, value)  
+    {
+		if (g_strcmp0(key,"config") == 0)
+		{
+			add_image_start_cmd (value,line);
+		}
 
+    }
+	json_object_to_file (json_file,js);
+	g_free (config_file);
+	g_free (json_file);
 }
 static gboolean parse_docker_file (const char *image_name,const char *image_tag)
 {
