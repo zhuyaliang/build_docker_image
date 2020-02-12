@@ -461,9 +461,103 @@ static gboolean docker_add_opt (char **line)
 {
 
 }
+static void add_image_tcp_port (json_object *js,GPtrArray *port_array)
+{
+	enum json_type type;
+	json_object *js_object;
+	json_object *js_port;
+	json_object *js_empty;
+	char         json_data[100] = { 0 };
+	
+	js_object = json_object_new_object(); 
+	
+	json_object_object_foreach(js, key, value)
+    {
+        if (g_strcmp0(key,"ExposedPorts") == 0)
+        {
+			json_object_object_del (js,key);
+        }
+	}
+	js_port = json_object_new_object(); 
+	js_empty = json_object_new_object(); 
+	for (guint i = 0; i < port_array->len; i++)
+    {
+        gchar *port = g_ptr_array_index (port_array, i);
+		if (port[strlen(port) -1] == '\n')
+		{
+			port[strlen(port) -1] = '\0';
+		}
+		sprintf (json_data,"%s/tcp",port);
+		json_object_object_add(js_port,json_data,js_empty);
+		memset (json_data,'\0',100);
+	}
+	json_object_object_add(js,"ExposedPorts",js_port);
+}
+static void change_json_expose_port (const char *config_file,GPtrArray *port_array)
+{
+	int fd;
+	char jsonbuff[10240] = { 0 };
+	json_object	*js;
+	char        *json_file;
+	
+	json_file = g_build_filename (compress_dir,config_file,NULL);
+	fd = open (json_file,O_RDWR);
+	read (fd,jsonbuff,10240);
+	
+	js = json_tokener_parse(jsonbuff);
+	json_object_object_foreach(js, key, value)  
+    {
+		if (g_strcmp0(key,"config") == 0)
+		{
+			add_image_tcp_port (value,port_array);
+		}
+
+    }
+	json_object_to_file (json_file,js);
+	g_free (json_file);
+
+}
 static gboolean docker_expose_opt (char **line)
 {
+	json_object	*js;
+	int          i = 1;
+	char        *json_file;
+	char jsonbuff[10240] = { 0 };
+	int fd;
+	const char *config_file;
 
+	g_autoptr(GPtrArray) port_array;
+
+	port_array = g_ptr_array_new ();
+	while (line[i] != NULL)
+	{
+		g_ptr_array_add (port_array,line[i]);
+		i++;
+	}
+	if (i == 1)
+	{
+		output_error_message ("Build","Please add port number");
+	}
+	json_file = g_build_filename (compress_dir,"manifest.json",NULL);
+	fd = open (json_file,O_RDWR);
+	read (fd,jsonbuff,10240);
+	
+	jsonbuff[0] = ' ';
+	jsonbuff[strlen(jsonbuff) - 1] = ' ';
+	js = json_tokener_parse(jsonbuff);
+
+    json_object_object_foreach(js, key, value)  /*Passing through every array element*/
+    {
+        if (g_strcmp0(key,"Config") == 0)
+        {
+			config_file = json_object_get_string (value);
+        }
+    }
+	g_free (json_file);
+	
+	change_json_expose_port (config_file,port_array);
+
+	return TRUE;
 }
 static gboolean docker_cmd_opt (char **line)
 {
