@@ -286,7 +286,8 @@ static char *get_json_config_name (void)
         }
     }
 	g_free (json_file);
-	
+//	json_object_put (js);
+
 	return strdup (config_file);
 }
 static char *create_image_layer (char *copy_tmp)
@@ -336,15 +337,15 @@ static void add_rootfs_diff_ids (json_object *js,char *sha256_value)
 		}
     }
 }
-static void change_config_json (const char *config_file,const char *option,char *sha256_value)
+static void add_image_history (const char *config_file,const char *option)
 {
-	int fd;
-	char jsonbuff[10240] = { 0 };
+	int   fd;
+	char  jsonbuff[10240] = { 0 };
 	json_object	*js,*js_object;
-	enum json_type type;
+	enum  json_type type;
 	char *time;
-	char create_by[1024] = { 0 };
-	char        *json_file;
+	char  create_by[1024] = { 0 };
+	char *json_file;
 	
 	json_file = g_build_filename (compress_dir,config_file,NULL);
 	fd = open (json_file,O_RDWR);
@@ -364,7 +365,26 @@ static void change_config_json (const char *config_file,const char *option,char 
 			json_object_object_add(js_object, "empty_layer", json_object_new_boolean(1));  
 			json_object_array_add (value,js_object);
 		}
-		else if (g_strcmp0(key,"rootfs") == 0)
+    }
+
+	json_object_to_file (json_file,js);
+	g_free (json_file);
+}
+static void change_config_json (const char *config_file,const char *option,char *sha256_value)
+{
+	int fd;
+	char jsonbuff[10240] = { 0 };
+	json_object	*js,*js_object;
+	char        *json_file;
+	
+	add_image_history (config_file,option);
+	json_file = g_build_filename (compress_dir,config_file,NULL);
+	fd = open (json_file,O_RDWR);
+	read (fd,jsonbuff,10240);
+	js = json_tokener_parse(jsonbuff);
+	json_object_object_foreach(js, key, value)  
+    {
+		if (g_strcmp0(key,"rootfs") == 0)
 		{
 			add_rootfs_diff_ids (value,sha256_value);
 		}
@@ -385,7 +405,6 @@ static gboolean change_json_file (char *sha256_value,const char *option)
 	char json_data[100] = { 0 };
 	const char *config_file;
 
-//
 	json_file = g_build_filename (compress_dir,"manifest.json",NULL);
 	fd = open (json_file,O_RDWR);
 	read (fd,jsonbuff,10240);
@@ -537,6 +556,7 @@ static void change_json_expose_port (const char *config_file,GPtrArray *port_arr
 
     }
 	json_object_to_file (json_file,js);
+	add_image_history (config_file,"expose port");
 	g_free (json_file);
 
 }
@@ -569,7 +589,7 @@ static gboolean docker_expose_opt (char **line)
 	g_free (config_file);
 	return TRUE;
 }
-static void add_image_start_cmd (json_object *js,char **line)
+static void add_image_start_cmd (char *config_file,json_object *js,char **line)
 {
 	enum json_type type;
 	json_object *js_cmd;
@@ -604,6 +624,7 @@ static void add_image_start_cmd (json_object *js,char **line)
 	json_object_array_add (js_cmd, json_object_new_string ("-c"));
 	json_object_array_add (js_cmd, json_object_new_string (image_cmd));
 	json_object_object_add(js,"Cmd",js_cmd);
+	add_image_history (config_file,"image_cmd");
 }
 static gboolean docker_cmd_opt (char **line)
 {
@@ -624,7 +645,7 @@ static gboolean docker_cmd_opt (char **line)
     {
 		if (g_strcmp0(key,"config") == 0)
 		{
-			add_image_start_cmd (value,line);
+			add_image_start_cmd (config_file,value,line);
 		}
 
     }
@@ -632,12 +653,132 @@ static gboolean docker_cmd_opt (char **line)
 	g_free (config_file);
 	g_free (json_file);
 }
+static gboolean packaging_new_image (char **standard_error)
+{
+	const gchar *argv[7];
+    gint         status;
+    GError      *error = NULL;
+	char        *shell_tar;
+	char        *compress_name;
+
+	shell_tar = g_find_program_in_path("tar");
+
+	if (shell_tar == NULL)
+	{
+		output_error_message ("Build","There is no \"tar\" command");
+	}
+	compress_name = g_strdup_printf("%s.tar",file_name);
+	
+	argv[0] = shell_tar;
+	argv[1] = "-cf";
+    argv[2] = compress_name;
+	argv[3] = "-C";
+	argv[4] = compress_dir;
+	argv[5] = ".";
+	argv[6] = NULL;
+	
+    if (!g_spawn_sync (NULL, (gchar**)argv, NULL, 0, NULL, NULL,NULL,standard_error, &status, &error))
+        goto ERROR;
+
+    if (!g_spawn_check_exit_status (status, &error))
+        goto ERROR;
+	
+	g_free (compress_name);
+	return TRUE;
+ERROR:
+	g_free (compress_name);
+	return FALSE;
+}
+static gboolean load_new_image (char **standard_error)
+{
+	const gchar *argv[8];
+    gint         status;
+    GError      *error = NULL;
+	char        *shell_docker;
+	char *ss;
+
+	shell_docker = g_find_program_in_path("docker");
+
+	if (shell_docker == NULL)
+	{
+		output_error_message ("Build","There is no \"docker\" command");
+	}
+	ss = g_strdup_printf("docker load -i %s.tar >> /dev/null 2>&1",file_name);
+	argv[0] = "/bin/bash";
+	argv[1] = "-c";
+	argv[2] = ss;
+	argv[3] = NULL;
+    
+	if (!g_spawn_sync (NULL, (gchar**)argv, NULL, 0, NULL, NULL,NULL,standard_error, &status, &error))
+        goto ERROR;
+
+	g_free (ss);
+	return TRUE;
+ERROR:
+	g_free (ss);
+	return FALSE;
+}
+static void docker_load_image (const char *image_name,const char *image_tag)
+{
+	json_object	*js,*js_repotags,*js_layer,*js_array;
+	char        *json_file;
+	char jsonbuff[10240] = { 0 };
+	char        json_data[128] = { 0 };
+	int fd;
+	const char *config_file;
+	char        *standard_error;
+	
+
+	json_file = g_build_filename (compress_dir,"manifest.json",NULL);
+	fd = open (json_file,O_RDWR);
+	read (fd,jsonbuff,10240);
+	
+	jsonbuff[0] = ' ';
+	jsonbuff[strlen(jsonbuff) - 1] = ' ';
+	js = json_tokener_parse(jsonbuff);
+
+    json_object_object_foreach(js, key, value)
+    {
+		if (g_strcmp0(key,"RepoTags") == 0)
+        {
+			js_layer = json_object_array_get_idx(value, 1);
+			const char *layer_info = json_object_get_string (js_layer);
+			js_repotags = json_object_new_array ();
+			sprintf (json_data,"%s:%s",image_name,image_tag);
+			json_object_array_add (js_repotags, json_object_new_string (json_data));
+			json_object_array_add (js_repotags, json_object_new_string (layer_info));
+			json_object_object_add(js,"RepoTags",js_repotags);
+			js_array = json_object_new_array();
+			json_object_array_add (js_array,js);
+			json_object_to_file (json_file,js_array);
+			
+        }
+    }
+	if (!packaging_new_image (&standard_error))
+	{
+		goto ERROR;
+	}
+	if (!load_new_image (&standard_error))
+	{
+		goto ERROR;
+	}
+	close (fd);
+	g_free (json_file);
+	
+	return;
+ERROR:
+	close (fd);
+	g_free (json_file);
+	output_error_message ("Build",standard_error);
+	
+}
 static gboolean parse_docker_file (const char *image_name,const char *image_tag)
 {
 	FILE *fp;
 	char  buf[1024] = { 0 };
 	char **line;
 	int   i = 0;
+	int   flag = 0;
 	
 	fp = fopen ("./docker.ini","r");
 	if (fp == NULL)
@@ -656,11 +797,16 @@ static gboolean parse_docker_file (const char *image_name,const char *image_tag)
 			if (g_strcmp0 (line[0],array_docker_opt[i].option_cmd) == 0)
 			{
 				array_docker_opt[i].option_exec (line);
+				flag = 1;
 				break;
 			}
 			i++;
 		}
 		memset (buf,'\0',1024);
+	}
+	if (flag == 1)
+	{
+		docker_load_image (image_name,image_tag);
 	}
 	fclose (fp);
 }
