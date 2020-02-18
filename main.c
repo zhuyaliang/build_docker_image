@@ -26,6 +26,8 @@ static gboolean docker_add_opt    (char **line,uint step);
 static gboolean docker_expose_opt (char **line,uint step);
 static gboolean docker_cmd_opt    (char **line,uint step);
 static gboolean docker_work_opt   (char **line,uint step);
+static gboolean docker_volume_opt (char **line,uint step);
+
 static docker_opt array_docker_opt [20] =
 {
     {"FROM",    docker_from_opt},
@@ -34,6 +36,7 @@ static docker_opt array_docker_opt [20] =
     {"EXPOSE",  docker_expose_opt},
     {"CMD",     docker_cmd_opt},
     {"WORKDIR", docker_work_opt},
+    {"VOLUME",  docker_volume_opt},
     {NULL,      NULL}
 };
 
@@ -708,6 +711,61 @@ static gboolean docker_work_opt (char **line,uint step)
 		if (g_strcmp0(key,"config") == 0)
 		{
 			add_image_workdir (config_file,value,line,step);
+		}
+
+    }
+	json_object_to_file (json_file,js);
+	g_free (config_file);
+	g_free (json_file);
+
+}
+static gboolean add_image_volume (char *config_file,json_object *js,char **line,uint step)
+{
+	enum json_type type;
+	json_object *js_volume;
+	json_object *js_empty;
+	
+	output_info_message ("BUILD","step %d Set docker image volume %s",step,line[1]);
+	json_object_object_foreach(js, key, value)
+    {
+        if (g_strcmp0(key,"Volumes") == 0)
+        {
+			json_object_object_del (js,key);
+        }
+	}
+	js_volume = json_object_new_object(); 
+	js_empty = json_object_new_object(); 
+	line[2][strlen(line[2]) -1] = '\0';
+	json_object_object_add(js_volume,line[1],js_empty);
+	json_object_object_add(js_volume,line[2],js_empty);
+	json_object_object_add(js,"Volumes",js_volume);
+	add_image_history (config_file,"set Volumes");
+
+}
+static gboolean docker_volume_opt (char **line,uint step)
+{
+	char *config_file;
+	int   fd;
+	char  jsonbuff[10240] = { 0 };
+	json_object	*js;
+	char        *json_file;
+	
+	if (line[1] == NULL || line[2] == NULL)
+	{
+		output_error_message ("Build","Invalid set volume");
+	}
+	/*get sha256sum json confif file name*/
+	config_file = get_json_config_name ();
+	json_file = g_build_filename (compress_dir,config_file,NULL);
+	fd = open (json_file,O_RDWR);
+	read (fd,jsonbuff,10240);
+	
+	js = json_tokener_parse(jsonbuff);
+	json_object_object_foreach(js, key, value)  
+    {
+		if (g_strcmp0(key,"config") == 0)
+		{
+			add_image_volume (config_file,value,line,step);
 		}
 
     }
