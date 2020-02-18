@@ -12,9 +12,12 @@
 
 ```CMD```
 
+```WORKDIR```
+
 Dockerfile
 ```
 FROM new:test
+WORKDIR /home
 COPY main.c /home
 EXPOSE 9090 8080
 CMD ls
