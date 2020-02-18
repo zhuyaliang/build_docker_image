@@ -49,7 +49,7 @@ static void exit_process (void)
 	}
 	if (access (compress_name,F_OK) == 0)
 	{
-	//	remove (compress_name);
+		remove (compress_name);
 		g_free (compress_name);
 	}
 	exit (0);
@@ -719,8 +719,8 @@ static gboolean load_new_image (char **standard_error)
 	argv[2] = ss;
 	argv[3] = NULL;
     
-//	if (!g_spawn_sync (NULL, (gchar**)argv, NULL, 0, NULL, NULL,NULL,standard_error, &status, &error))
-//       goto ERROR;
+	if (!g_spawn_sync (NULL, (gchar**)argv, NULL, 0, NULL, NULL,NULL,standard_error, &status, &error))
+       goto ERROR;
 
 	g_free (ss);
 	return TRUE;
