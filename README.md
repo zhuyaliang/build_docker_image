@@ -14,7 +14,7 @@
 
 ```WORKDIR```
 
-```VOLUMe```
+```VOLUME```
 
 Dockerfile
 ```
