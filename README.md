@@ -14,10 +14,13 @@
 
 ```WORKDIR```
 
+```VOLUMe```
+
 Dockerfile
 ```
 FROM new:test
 WORKDIR /home
+VOLUME /home /home
 COPY main.c /home
 EXPOSE 9090 8080
 CMD ls
