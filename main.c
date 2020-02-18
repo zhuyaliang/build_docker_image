@@ -13,18 +13,18 @@
 char  *file_name;
 char  *compress_dir;
 char        *compress_name;
-typedef gboolean (*option_func) (char **);
+typedef gboolean (*option_func) (char **,uint);
 typedef struct 
 {
 	const char  *option_cmd;
 	option_func  option_exec;  
 }docker_opt;
 
-static gboolean docker_from_opt (char **line);
-static gboolean docker_copy_opt (char **line);
-static gboolean docker_add_opt (char **line);
-static gboolean docker_expose_opt (char **line);
-static gboolean docker_cmd_opt (char **line);
+static gboolean docker_from_opt   (char **line,uint step);
+static gboolean docker_copy_opt   (char **line,uint step);
+static gboolean docker_add_opt    (char **line,uint step);
+static gboolean docker_expose_opt (char **line,uint step);
+static gboolean docker_cmd_opt    (char **line,uint step);
 static docker_opt array_docker_opt [20] =
 {
     {"FROM",    docker_from_opt},
@@ -54,7 +54,7 @@ static void exit_process (void)
 	}
 	exit (0);
 }
-void output_error_message (const char *header,const char *message,...)
+static void output_error_message (const char *header,const char *message,...)
 {
     va_list args;
     char   *file_data;
@@ -65,9 +65,19 @@ void output_error_message (const char *header,const char *message,...)
     va_start(args,message);
     vsprintf(buf,message, args);
     va_end(args);
-    fprintf(stderr,"%s:\r\n %s\r\n",header,buf);
+    fprintf(stderr,"<ERROR> %s: %s\r\n",header,buf);
 	
 	exit_process ();
+}
+static void output_info_message (const char *header,const char *message,...)
+{
+    va_list args;
+    char    buf[1024];
+
+    va_start(args,message);
+    vsprintf(buf,message, args);
+    va_end(args);
+    fprintf(stdout,"<%s>:  %s\r\n",header,buf);
 }
 static gboolean docker_save_image (const char *image,char **standard_error)
 {
@@ -176,7 +186,7 @@ ERROR:
 	
 	return FALSE;
 }
-static gboolean docker_from_opt (char **line)
+static gboolean docker_from_opt (char **line,uint step)
 {
 	const gchar *argv[5];
     gint         status;
@@ -193,6 +203,8 @@ static gboolean docker_from_opt (char **line)
 	}
 	
 	line[1][strlen (line[1]) -1] = '\0';
+
+	output_info_message ("BUILD","step %d Find base image %s",step,line[1]);
 	if (!is_image_exists (line[1]))
 	{
 		argv[0] = shell_docker;
@@ -436,7 +448,7 @@ static gboolean change_json_file (char *sha256_value,const char *option)
 	change_config_json (config_file,option,sha256_value);
 	
 }
-static gboolean docker_copy_opt (char **line)
+static gboolean docker_copy_opt (char **line,uint step)
 {
 	char *copy_tmp;
 	char *dest_dir;
@@ -466,6 +478,7 @@ static gboolean docker_copy_opt (char **line)
 	mkdir (dest_dir, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH); 
 	dest_file = g_build_filename (dest_dir,line[1], NULL);
 	
+	output_info_message ("BUILD","step %d Copy files to image %s",step,line[1]);
 	if (!copy_file (line[1],dest_file,&standard_error))
 	{
 		goto ERROR;
@@ -498,7 +511,7 @@ ERROR:
 
 	output_error_message ("Build",standard_error);
 }
-static gboolean docker_add_opt (char **line)
+static gboolean docker_add_opt (char **line,uint step)
 {
 
 }
@@ -559,7 +572,7 @@ static void change_json_expose_port (const char *config_file,GPtrArray *port_arr
 	g_free (json_file);
 
 }
-static gboolean docker_expose_opt (char **line)
+static gboolean docker_expose_opt (char **line,uint step)
 {
 	json_object	*js;
 	int          i = 1;
@@ -582,13 +595,14 @@ static gboolean docker_expose_opt (char **line)
 	}
 	/*get sha256sum json confif file name*/
 	config_file = get_json_config_name ();
+	output_info_message ("BUILD","step %d Exposed port: %s....",step,line[1]);
 	/*change sha256sum json confif file port xxxx/tcp {}*/
 	change_json_expose_port (config_file,port_array);
 	
 	g_free (config_file);
 	return TRUE;
 }
-static void add_image_start_cmd (char *config_file,json_object *js,char **line)
+static void add_image_start_cmd (char *config_file,json_object *js,char **line,uint step)
 {
 	enum json_type type;
 	json_object *js_cmd;
@@ -606,6 +620,8 @@ static void add_image_start_cmd (char *config_file,json_object *js,char **line)
 		j++;
 		i++;
 	}
+	image_cmd[strlen(image_cmd) - 2] = '\0';	
+	output_info_message ("BUILD","step %d Modify docker image execution command %s",step,image_cmd);
 	if (image_cmd[j-2] == '\n')
 	{
 		image_cmd[j-2] = '\0';
@@ -625,7 +641,7 @@ static void add_image_start_cmd (char *config_file,json_object *js,char **line)
 	json_object_object_add(js,"Cmd",js_cmd);
 	add_image_history (config_file,"image_cmd");
 }
-static gboolean docker_cmd_opt (char **line)
+static gboolean docker_cmd_opt (char **line,uint step)
 {
 	char *config_file;
 	int   fd;
@@ -644,7 +660,7 @@ static gboolean docker_cmd_opt (char **line)
     {
 		if (g_strcmp0(key,"config") == 0)
 		{
-			add_image_start_cmd (config_file,value,line);
+			add_image_start_cmd (config_file,value,line,step);
 		}
 
     }
@@ -713,7 +729,7 @@ ERROR:
 	g_free (ss);
 	return FALSE;
 }
-static void docker_load_image (const char *image_name,const char *image_tag)
+static void docker_load_image (const char *image_name,const char *image_tag,uint step)
 {
 	json_object	*js,*js_repotags,*js_layer,*js_array;
 	char        *json_file;
@@ -731,6 +747,7 @@ static void docker_load_image (const char *image_name,const char *image_tag)
 	jsonbuff[strlen(jsonbuff) - 1] = ' ';
 	js = json_tokener_parse(jsonbuff);
 
+	output_info_message ("BUILD","step %d :Load new image %s:%s",step,image_name,image_tag);
     json_object_object_foreach(js, key, value)
     {
 		if (g_strcmp0(key,"RepoTags") == 0)
@@ -775,7 +792,7 @@ static gboolean parse_docker_file (const char *image_name,const char *image_tag)
 	char **line;
 	int   i = 0;
 	int   flag = 0;
-	
+	uint  step = 1;	
 	fp = fopen ("./docker.ini","r");
 	if (fp == NULL)
 	{
@@ -792,18 +809,20 @@ static gboolean parse_docker_file (const char *image_name,const char *image_tag)
 		{
 			if (g_strcmp0 (line[0],array_docker_opt[i].option_cmd) == 0)
 			{
-				array_docker_opt[i].option_exec (line);
+				array_docker_opt[i].option_exec (line,step);
 				flag = 1;
 				break;
 			}
 			i++;
 		}
+		step ++;
 		memset (buf,'\0',1024);
 	}
 	if (flag == 1)
 	{
-		docker_load_image (image_name,image_tag);
+		docker_load_image (image_name,image_tag,step);
 	}
+	output_info_message ("INFO","Successfully built docker image");
 	fclose (fp);
 	exit_process ();
 }
@@ -830,7 +849,7 @@ static int docker_build (const char *new_image)
 	{
 		output_error_message ("Build","This file (docker.ini) does not exist in the current directory");
 	}
-	
+	output_info_message ("INFO","Start building docker image");
 	if (parse_docker_file (str[0],str[1]))
 	{
 		g_strfreev (str);
@@ -880,5 +899,4 @@ int main (int argc,char **argv)
 		output_error_message ("usage","mkdimage:[Push] or [Pull] or [Build]");
 	}
 	
-
 }
