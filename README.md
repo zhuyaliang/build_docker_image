@@ -23,4 +23,4 @@ CMD ls
 make
 
 ## 使用
-sudo ./mkdimage Build <imagename>:<tag>
+sudo ./mkdimage Build  ```imagename```:```tag```
