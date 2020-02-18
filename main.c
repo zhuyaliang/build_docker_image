@@ -49,7 +49,7 @@ static void exit_process (void)
 	}
 	if (access (compress_name,F_OK) == 0)
 	{
-		remove (compress_name);
+	//	remove (compress_name);
 		g_free (compress_name);
 	}
 	exit (0);
@@ -297,7 +297,6 @@ static char *get_json_config_name (void)
         }
     }
 	g_free (json_file);
-//	json_object_put (js);
 
 	return strdup (config_file);
 }
@@ -720,8 +719,8 @@ static gboolean load_new_image (char **standard_error)
 	argv[2] = ss;
 	argv[3] = NULL;
     
-	if (!g_spawn_sync (NULL, (gchar**)argv, NULL, 0, NULL, NULL,NULL,standard_error, &status, &error))
-        goto ERROR;
+//	if (!g_spawn_sync (NULL, (gchar**)argv, NULL, 0, NULL, NULL,NULL,standard_error, &status, &error))
+//       goto ERROR;
 
 	g_free (ss);
 	return TRUE;
@@ -729,16 +728,45 @@ ERROR:
 	g_free (ss);
 	return FALSE;
 }
+static char *change_json_file_name (void)
+{
+	char *json_name;
+	FILE *fp;
+    char  buffer[65];
+	char *new_name;
+	char *shell_cmd;
+	char *work_dir;
+
+	json_name = get_json_config_name ();
+	shell_cmd = g_strdup_printf ("sha256sum %s/%s",compress_dir,json_name);
+	fp = popen(shell_cmd, "r");
+    fgets(buffer, sizeof(buffer), fp);
+    pclose(fp);
+
+	new_name = g_strdup_printf ("%s.json",buffer);
+
+	work_dir = g_get_current_dir();
+	chdir (compress_dir);
+	g_rename (json_name,new_name);
+	chdir (work_dir);
+	
+	g_free (json_name);
+	g_free (shell_cmd);
+
+	return new_name;
+}
 static void docker_load_image (const char *image_name,const char *image_tag,uint step)
 {
-	json_object	*js,*js_repotags,*js_layer,*js_array;
+	json_object	*js,*js_repotags,*js_array;
 	char        *json_file;
 	char jsonbuff[10240] = { 0 };
 	char        json_data[128] = { 0 };
 	int fd;
 	const char *config_file;
-	char        *standard_error;
-	
+	char       *standard_error;
+	char       *new_name;  
+
+	new_name  = change_json_file_name ();
 	json_file = g_build_filename (compress_dir,"manifest.json",NULL);
 	fd = open (json_file,O_RDWR);
 	read (fd,jsonbuff,10240);
@@ -750,14 +778,15 @@ static void docker_load_image (const char *image_name,const char *image_tag,uint
 	output_info_message ("BUILD","step %d :Load new image %s:%s",step,image_name,image_tag);
     json_object_object_foreach(js, key, value)
     {
+		if (g_strcmp0(key,"Config") == 0)
+		{
+			json_object_object_add(js,key,json_object_new_string (new_name));
+		}
 		if (g_strcmp0(key,"RepoTags") == 0)
         {
-			js_layer = json_object_array_get_idx(value, 0);
-			const char *layer_info = json_object_get_string (js_layer);
 			js_repotags = json_object_new_array ();
 			sprintf (json_data,"%s:%s",image_name,image_tag);
 			json_object_array_add (js_repotags, json_object_new_string (json_data));
-			json_object_array_add (js_repotags, json_object_new_string (layer_info));
 			json_object_object_add(js,"RepoTags",js_repotags);
 			js_array = json_object_new_array();
 			json_object_array_add (js_array,js);
@@ -776,11 +805,13 @@ static void docker_load_image (const char *image_name,const char *image_tag,uint
 	}
 
 	close (fd);
+	g_free (new_name);
 	g_free (json_file);
 	
 	return;
 ERROR:
 	close (fd);
+	g_free (new_name);
 	g_free (json_file);
 	output_error_message ("Build",standard_error);
 	
@@ -793,10 +824,10 @@ static gboolean parse_docker_file (const char *image_name,const char *image_tag)
 	int   i = 0;
 	int   flag = 0;
 	uint  step = 1;	
-	fp = fopen ("./docker.ini","r");
+	fp = fopen ("./Dockerfile","r");
 	if (fp == NULL)
 	{
-		output_error_message ("Build","Error opening profile(docker.ini)");
+		output_error_message ("Build","Error opening profile(Dockerfile)");
 	}
 	while((fgets(buf,1024,fp)) != NULL)
 	{
@@ -841,13 +872,13 @@ static int docker_build (const char *new_image)
 		
 		output_error_message ("Build","Parameter format error use [name]:[tag]");
 	}
-	if (stat("./docker.ini",&st) != 0 )
+	if (stat("./Dockerfile",&st) != 0 )
 	{
-		output_error_message ("Build","This file (docker.ini) does not exist in the current directory");
+		output_error_message ("Build","This file (Dockerfile) does not exist in the current directory");
 	}
 	if ( !S_ISREG(st.st_mode) )
 	{
-		output_error_message ("Build","This file (docker.ini) does not exist in the current directory");
+		output_error_message ("Build","This file (Dockerfile) does not exist in the current directory");
 	}
 	output_info_message ("INFO","Start building docker image");
 	if (parse_docker_file (str[0],str[1]))
@@ -892,7 +923,10 @@ int main (int argc,char **argv)
 		{
 			output_error_message ("Build","docker image name:tag");
 		}
-		ret = docker_build (argv[2]);	
+		if (docker_build (argv[2]) < 0 )
+		{
+			output_error_message ("Build","build error!!!");
+		}
 	}
 	else
 	{
