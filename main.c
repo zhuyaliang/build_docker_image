@@ -12,6 +12,7 @@
 
 char  *file_name;
 char  *compress_dir;
+char        *compress_name;
 typedef gboolean (*option_func) (char **);
 typedef struct 
 {
@@ -37,7 +38,7 @@ static docker_opt array_docker_opt [20] =
 static void exit_process (void)
 {
 	char shell_cmd[1024] = { 0 };
-
+	
 	g_free (file_name);
 	if (compress_dir != NULL)
 	{
@@ -45,6 +46,11 @@ static void exit_process (void)
 		system (shell_cmd);
 		g_free (compress_dir);
 		
+	}
+	if (access (compress_name,F_OK) == 0)
+	{
+		remove (compress_name);
+		g_free (compress_name);
 	}
 	exit (0);
 }
@@ -70,7 +76,6 @@ static gboolean docker_save_image (const char *image,char **standard_error)
     GError      *error = NULL;
 	char        *shell_docker;
 	char        *standard_output;
-	char        *compress_name;
 
 	shell_docker = g_find_program_in_path("docker");
 
@@ -93,11 +98,9 @@ static gboolean docker_save_image (const char *image,char **standard_error)
     if (!g_spawn_check_exit_status (status, &error))
         goto ERROR;
 	
-	g_free (compress_name);
 	return TRUE;
 ERROR:
 
-	g_free (compress_name);
 	return FALSE;
 }
 static gboolean is_image_exists (const char *image)
@@ -141,11 +144,9 @@ static gboolean extract_docker_image (char **standard_error)
     GError      *error = NULL;
 	char        *shell_tar;
 	char        *standard_output;
-	char        *compress_name;
 	
 
 	compress_dir = g_strdup_printf("%s-dir",file_name);
-	compress_name = g_strdup_printf("%s.tar",file_name);
 	
 	mkdir(compress_dir, S_IRWXU | S_IRWXG | S_IROTH | S_IXOTH); 
 	shell_tar = g_find_program_in_path("tar");
@@ -169,11 +170,9 @@ static gboolean extract_docker_image (char **standard_error)
 		goto ERROR;
 
 	remove (compress_name);
-	g_free (compress_name);
 	return TRUE;
 ERROR:
 	remove (compress_name);
-	g_free (compress_name);
 	
 	return FALSE;
 }
@@ -659,7 +658,6 @@ static gboolean packaging_new_image (char **standard_error)
     gint         status;
     GError      *error = NULL;
 	char        *shell_tar;
-	char        *compress_name;
 
 	shell_tar = g_find_program_in_path("tar");
 
@@ -667,7 +665,6 @@ static gboolean packaging_new_image (char **standard_error)
 	{
 		output_error_message ("Build","There is no \"tar\" command");
 	}
-	compress_name = g_strdup_printf("%s.tar",file_name);
 	
 	argv[0] = shell_tar;
 	argv[1] = "-cf";
@@ -683,10 +680,8 @@ static gboolean packaging_new_image (char **standard_error)
     if (!g_spawn_check_exit_status (status, &error))
         goto ERROR;
 	
-	g_free (compress_name);
 	return TRUE;
 ERROR:
-	g_free (compress_name);
 	return FALSE;
 }
 static gboolean load_new_image (char **standard_error)
@@ -728,7 +723,6 @@ static void docker_load_image (const char *image_name,const char *image_tag)
 	const char *config_file;
 	char        *standard_error;
 	
-
 	json_file = g_build_filename (compress_dir,"manifest.json",NULL);
 	fd = open (json_file,O_RDWR);
 	read (fd,jsonbuff,10240);
@@ -741,7 +735,7 @@ static void docker_load_image (const char *image_name,const char *image_tag)
     {
 		if (g_strcmp0(key,"RepoTags") == 0)
         {
-			js_layer = json_object_array_get_idx(value, 1);
+			js_layer = json_object_array_get_idx(value, 0);
 			const char *layer_info = json_object_get_string (js_layer);
 			js_repotags = json_object_new_array ();
 			sprintf (json_data,"%s:%s",image_name,image_tag);
@@ -754,6 +748,7 @@ static void docker_load_image (const char *image_name,const char *image_tag)
 			
         }
     }
+	
 	if (!packaging_new_image (&standard_error))
 	{
 		goto ERROR;
@@ -762,6 +757,7 @@ static void docker_load_image (const char *image_name,const char *image_tag)
 	{
 		goto ERROR;
 	}
+
 	close (fd);
 	g_free (json_file);
 	
@@ -809,6 +805,7 @@ static gboolean parse_docker_file (const char *image_name,const char *image_tag)
 		docker_load_image (image_name,image_tag);
 	}
 	fclose (fp);
+	exit_process ();
 }
 static int docker_build (const char *new_image)
 {
