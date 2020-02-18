@@ -25,6 +25,7 @@ static gboolean docker_copy_opt   (char **line,uint step);
 static gboolean docker_add_opt    (char **line,uint step);
 static gboolean docker_expose_opt (char **line,uint step);
 static gboolean docker_cmd_opt    (char **line,uint step);
+static gboolean docker_work_opt   (char **line,uint step);
 static docker_opt array_docker_opt [20] =
 {
     {"FROM",    docker_from_opt},
@@ -32,6 +33,7 @@ static docker_opt array_docker_opt [20] =
     {"ADD",     docker_add_opt},
     {"EXPOSE",  docker_expose_opt},
     {"CMD",     docker_cmd_opt},
+    {"WORKDIR", docker_work_opt},
     {NULL,      NULL}
 };
 
@@ -667,6 +669,53 @@ static gboolean docker_cmd_opt (char **line,uint step)
 	g_free (config_file);
 	g_free (json_file);
 }
+static void add_image_workdir (char *config_file,json_object *js,char **line,uint step)
+{
+
+	line[1][strlen(line[1]) -1] = '\0';
+	output_info_message ("BUILD","step %d Set docker image WorkingDir %s",step,line[1]);
+	json_object_object_foreach(js, key, value)
+    {
+        if (g_strcmp0(key,"WorkingDir") == 0)
+        {
+			json_object_object_del (js,key);
+        }
+	}
+	json_object_object_add(js,"WorkingDir",json_object_new_string (line[1]));
+	add_image_history (config_file,"set WorkingDir");
+}
+static gboolean docker_work_opt (char **line,uint step)
+{
+	char *config_file;
+	int   fd;
+	char  jsonbuff[10240] = { 0 };
+	json_object	*js;
+	char        *json_file;
+	
+	if (line[1] == NULL)
+	{
+		output_error_message ("Build","Invalid set WorkingDir");
+	}
+	/*get sha256sum json confif file name*/
+	config_file = get_json_config_name ();
+	json_file = g_build_filename (compress_dir,config_file,NULL);
+	fd = open (json_file,O_RDWR);
+	read (fd,jsonbuff,10240);
+	
+	js = json_tokener_parse(jsonbuff);
+	json_object_object_foreach(js, key, value)  
+    {
+		if (g_strcmp0(key,"config") == 0)
+		{
+			add_image_workdir (config_file,value,line,step);
+		}
+
+    }
+	json_object_to_file (json_file,js);
+	g_free (config_file);
+	g_free (json_file);
+
+}
 static gboolean packaging_new_image (char **standard_error)
 {
 	const gchar *argv[7];
@@ -841,12 +890,12 @@ static gboolean parse_docker_file (const char *image_name,const char *image_tag)
 			if (g_strcmp0 (line[0],array_docker_opt[i].option_cmd) == 0)
 			{
 				array_docker_opt[i].option_exec (line,step);
+				step ++;
 				flag = 1;
 				break;
 			}
 			i++;
 		}
-		step ++;
 		memset (buf,'\0',1024);
 	}
 	if (flag == 1)
