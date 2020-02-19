@@ -923,10 +923,42 @@ ERROR:
 	output_error_message ("Build",standard_error);
 	
 }
+
+static void delete_space (char *buf,char *newStr)
+{
+	char *start = buf;
+    int   i = 0;
+	
+	while(*start == ' ')
+    {
+         start++;
+    }
+    buf = start;
+    while(*buf != '\0' )
+    {
+		if (*buf == 9)
+		{
+			*buf = ' ';
+		}
+		if((*buf != ' ' || (*buf == ' ' && *(buf + 1) != ' ' )))
+        {
+          newStr[i] = *buf;
+          buf++;
+          i++;
+        }
+        else
+        {
+            buf++;
+        }
+	}
+    newStr[i] = '\0';
+}
 static gboolean parse_docker_file (const char *image_name,const char *image_tag)
 {
 	FILE *fp;
 	char  buf[1024] = { 0 };
+	char  next_buf[1024] = { 0 };
+	char  new_buf[1024] = { 0 };
 	char **line;
 	int   i = 0;
 	int   flag = 0;
@@ -942,7 +974,15 @@ static gboolean parse_docker_file (const char *image_name,const char *image_tag)
 		{
 			continue;
 		}
-		line = g_strsplit (buf," ",-1);
+		if (buf[strlen(buf)-2] == '\\')
+		{
+			fgets(next_buf,1024,fp);
+			buf[strlen(buf)-2] = ' ';
+			memcpy (&buf[strlen(buf) -2],next_buf,strlen(next_buf));	
+		}
+
+		delete_space (buf,new_buf);
+		line = g_strsplit (new_buf," ",-1);
 		while (array_docker_opt[i].option_cmd != NULL)
 		{
 			if (g_strcmp0 (line[0],array_docker_opt[i].option_cmd) == 0)
@@ -955,6 +995,7 @@ static gboolean parse_docker_file (const char *image_name,const char *image_tag)
 			i++;
 		}
 		memset (buf,'\0',1024);
+		memset (new_buf,'\0',1024);
 	}
 	if (flag == 1)
 	{
