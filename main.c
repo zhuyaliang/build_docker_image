@@ -27,6 +27,7 @@ static gboolean docker_expose_opt (char **line,uint step);
 static gboolean docker_cmd_opt    (char **line,uint step);
 static gboolean docker_work_opt   (char **line,uint step);
 static gboolean docker_volume_opt (char **line,uint step);
+static gboolean docker_env_opt    (char **line,uint step);
 
 static docker_opt array_docker_opt [20] =
 {
@@ -37,6 +38,7 @@ static docker_opt array_docker_opt [20] =
     {"CMD",     docker_cmd_opt},
     {"WORKDIR", docker_work_opt},
     {"VOLUME",  docker_volume_opt},
+    {"ENV",     docker_env_opt},
     {NULL,      NULL}
 };
 
@@ -773,6 +775,65 @@ static gboolean docker_volume_opt (char **line,uint step)
 	g_free (config_file);
 	g_free (json_file);
 
+}
+static gboolean add_image_env (char *config_file,json_object *js,GPtrArray *env_array,uint step)
+{
+	output_info_message ("BUILD","step %d Set docker image env.... %s",step,g_ptr_array_index (env_array, 0));
+	json_object_object_foreach(js, key, value)
+    {
+        if (g_strcmp0(key,"Env") == 0)
+        {
+			for (guint i = 0; i < env_array->len; i++)
+			{
+				gchar *env = g_ptr_array_index (env_array, i);
+				if (env[strlen(env) -1] == '\n')
+				{
+					env[strlen(env) -1] = '\0';
+				}
+				json_object_array_add (value, json_object_new_string (env));
+			}
+        }
+	}
+	add_image_history (config_file,"set env");
+}
+static gboolean docker_env_opt (char **line,uint step)
+{
+	char        *config_file;
+	int          fd;
+	char         jsonbuff[10240] = { 0 };
+	json_object	*js;
+	char        *json_file;
+	uint         i = 1;
+	g_autoptr(GPtrArray) env_array;
+
+	env_array = g_ptr_array_new ();
+	while (line[i] != NULL)
+	{
+		g_ptr_array_add (env_array,line[i]);
+		i++;
+	}
+	if (i == 1)
+	{
+		output_error_message ("Build","Please add env set");
+	}
+	
+	/*get sha256sum json confif file name*/
+	config_file = get_json_config_name ();
+	json_file = g_build_filename (compress_dir,config_file,NULL);
+	fd = open (json_file,O_RDWR);
+	read (fd,jsonbuff,10240);
+	
+	js = json_tokener_parse(jsonbuff);
+	json_object_object_foreach(js, key, value)  
+    {
+		if (g_strcmp0(key,"config") == 0)
+		{
+			add_image_env (config_file,value,env_array,step);
+		}
+    }
+	json_object_to_file (json_file,js);
+	g_free (config_file);
+	g_free (json_file);
 }
 static gboolean packaging_new_image (char **standard_error)
 {
