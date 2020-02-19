@@ -16,9 +16,12 @@
 
 ```VOLUME```
 
+```ENV```
+
 Dockerfile
 ```
 FROM new:test
+ENV ROOT=/root
 WORKDIR /home
 VOLUME /home /home
 COPY main.c /home
